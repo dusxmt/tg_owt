@@ -25,7 +25,6 @@ if (WIN32)
     else()
         message(FATAL_ERROR "Unsupported CPU architecture on Windows.")
     endif()
-    set(ASM_SUFFIX ".asm")
 elseif (APPLE)
     if (is_x86)
         list(APPEND include_directories
@@ -59,6 +58,8 @@ else()
         list(APPEND include_directories
             ${libvpx_loc}/source/config/linux/arm-neon
         )
+        set(ads2gas ${libvpx_loc}/source/libvpx/build/make/ads2gas.pl)
+
     elseif (is_arm)
         list(APPEND include_directories
             ${libvpx_loc}/source/config/linux/arm
@@ -69,7 +70,13 @@ else()
         )
     endif()
 
-    set(ASM_SUFFIX ".asm.S")
+endif()
+
+if (ads2gas)
+    find_package(Perl)
+    if (NOT PERL_FOUND)
+        message(FATAL_ERROR "Unable to find perl, needed by ${ads2gas} on 32-bit ARM systems when NEON SIMD is enabled.")
+    endif()
 endif()
 
 foreach(dir ${include_directories})
@@ -694,31 +701,68 @@ elseif (is_arm OR is_aarch64)
 
     # 32-bit assembly with NEON instructions
     if (arm_use_neon AND (NOT is_aarch64))
+
+        # Convert the ASM files from the ARM Developer Suite 1.0.1 syntax
+        # to syntax accepted by the C compiler's assembler.
+
+        string(REGEX REPLACE
+            "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}"
+            libvpx_loc_build ${libvpx_loc})
+
+        list(APPEND include_directories
+            ${libvpx_loc_build}/source/libvpx
+        )
+
+        set(libvpx_arm32_asm_dir_src ${libvpx_loc}/source/libvpx/vpx_dsp/arm)
+        set(libvpx_arm32_asm_dir_obj ${libvpx_loc_build}/source/libvpx/vpx_dsp/arm)
+
+        file(MAKE_DIRECTORY ${libvpx_arm32_asm_dir_obj})
+
+        set(libvpx_arm32_asm_in
+            intrapred_neon_asm.asm
+            vpx_convolve_copy_neon_asm.asm
+            vpx_convolve8_horiz_filter_type2_neon.asm
+            vpx_convolve8_vert_filter_type2_neon.asm
+            vpx_convolve8_horiz_filter_type1_neon.asm
+            vpx_convolve8_vert_filter_type1_neon.asm
+            vpx_convolve8_avg_horiz_filter_type2_neon.asm
+            vpx_convolve8_avg_vert_filter_type2_neon.asm
+            vpx_convolve8_avg_horiz_filter_type1_neon.asm
+            vpx_convolve8_avg_vert_filter_type1_neon.asm
+            vpx_convolve_avg_neon_asm.asm
+            loopfilter_16_neon.asm
+            loopfilter_8_neon.asm
+            loopfilter_4_neon.asm
+            save_reg_neon.asm
+            idct_neon.asm
+            idct4x4_1_add_neon.asm
+            idct4x4_add_neon.asm)
+
+        foreach(in_file ${libvpx_arm32_asm_in})
+            set(out_file ${in_file}.S)
+
+            set(in_file_path  ${libvpx_arm32_asm_dir_src}/${in_file})
+            set(out_file_path ${libvpx_arm32_asm_dir_obj}/${out_file})
+
+            add_custom_command(
+                OUTPUT ${out_file_path}
+                COMMAND sh -c \"cat \'${in_file_path}\' | ${PERL_EXECUTABLE} \'${ads2gas}\' > \'${out_file_path}\'\"
+                DEPENDS ${in_file_path}
+            )
+
+            nice_target_sources(libvpx ${libvpx_arm32_asm_dir_obj}
+            PRIVATE
+                ${out_file}
+            )
+        endforeach()
+
         nice_target_sources(libvpx ${libvpx_loc}
         PRIVATE
 
-            source/libvpx/vpx_dsp/arm/intrapred_neon_asm${ASM_SUFFIX}
-            source/libvpx/vpx_dsp/arm/vpx_convolve_copy_neon_asm${ASM_SUFFIX}
-            source/libvpx/vpx_dsp/arm/vpx_convolve8_horiz_filter_type2_neon${ASM_SUFFIX}
-            source/libvpx/vpx_dsp/arm/vpx_convolve8_vert_filter_type2_neon${ASM_SUFFIX}
-            source/libvpx/vpx_dsp/arm/vpx_convolve8_horiz_filter_type1_neon${ASM_SUFFIX}
-            source/libvpx/vpx_dsp/arm/vpx_convolve8_vert_filter_type1_neon${ASM_SUFFIX}
-            source/libvpx/vpx_dsp/arm/vpx_convolve8_avg_horiz_filter_type2_neon${ASM_SUFFIX}
-            source/libvpx/vpx_dsp/arm/vpx_convolve8_avg_vert_filter_type2_neon${ASM_SUFFIX}
-            source/libvpx/vpx_dsp/arm/vpx_convolve8_avg_horiz_filter_type1_neon${ASM_SUFFIX}
-            source/libvpx/vpx_dsp/arm/vpx_convolve8_avg_vert_filter_type1_neon${ASM_SUFFIX}
-            source/libvpx/vpx_dsp/arm/vpx_convolve_avg_neon_asm${ASM_SUFFIX}
             source/libvpx/vpx_dsp/arm/vpx_convolve8_neon_asm.c
             source/libvpx/vpx_dsp/arm/vpx_convolve8_neon_asm.h
             source/libvpx/vpx_dsp/arm/vpx_convolve_neon.c
-            source/libvpx/vpx_dsp/arm/loopfilter_16_neon${ASM_SUFFIX}
-            source/libvpx/vpx_dsp/arm/loopfilter_8_neon${ASM_SUFFIX}
-            source/libvpx/vpx_dsp/arm/loopfilter_4_neon${ASM_SUFFIX}
-            source/libvpx/vpx_dsp/arm/save_reg_neon${ASM_SUFFIX}
-            source/libvpx/vpx_dsp/arm/idct_neon${ASM_SUFFIX}
-            source/libvpx/vpx_dsp/arm/idct4x4_1_add_neon${ASM_SUFFIX}
-            source/libvpx/vpx_dsp/arm/idct4x4_add_neon${ASM_SUFFIX}
-    )
+        )
 
     # C versions of the above hand-optimized files, when available
     elseif (arm_use_neon AND is_aarch64)
@@ -732,7 +776,7 @@ elseif (is_arm OR is_aarch64)
             source/libvpx/vpx_dsp/arm/loopfilter_neon.c
             source/libvpx/vpx_dsp/arm/idct4x4_1_add_neon.c
             source/libvpx/vpx_dsp/arm/idct4x4_add_neon.c
-    )
+        )
     endif()
 endif()
 
